@@ -6033,6 +6033,27 @@ class GatewayRunner:
                     return await self._handle_approve_command(event)
                 return await self._handle_deny_command(event)
 
+            # Numeric shortcut for approval (Feishu mobile UX): 1→approve once,
+            # 2→approve session, 3→approve always, 0→deny.  Only active when
+            # an agent thread is blocked on approval.
+            _numeric_approve = (
+                _quick_key in self._pending_approvals
+                and has_blocking_approval(_quick_key)
+            )
+            if _numeric_approve:
+                _raw = (event.text or "").strip()
+                if _raw in ("0", "1", "2", "3"):
+                    if _raw == "0":
+                        return await self._handle_deny_command(event)
+                    elif _raw == "1":
+                        return await self._handle_approve_command(event)
+                    elif _raw == "2":
+                        event.text = "/approve session"
+                        return await self._handle_approve_command(event)
+                    elif _raw == "3":
+                        event.text = "/approve always"
+                        return await self._handle_approve_command(event)
+
             # /agents (/tasks alias) should be query-only and never interrupt.
             if _cmd_def_inner and _cmd_def_inner.name == "agents":
                 return await self._handle_agents_command(event)
