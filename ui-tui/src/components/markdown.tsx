@@ -323,7 +323,7 @@ function MdInline({ t, text }: { t: Theme; text: string }) {
     parts.push(<Text key={parts.length}>{text.slice(last)}</Text>)
   }
 
-  return <Text wrap="wrap-trim">{parts.length ? parts : text}</Text>
+  return <Text>{parts.length ? parts : <Text>{text}</Text>}</Text>
 }
 
 // Cross-instance parsed-children cache: useMemo's per-instance cache dies
@@ -420,7 +420,7 @@ function MdImpl({ compact, t, text }: MdProps) {
       if (media) {
         start('paragraph')
         nodes.push(
-          <Text color={t.color.muted} key={key} wrap="wrap-trim">
+          <Text color={t.color.muted} key={key}>
             {'▸ '}
 
             <Link url={/^(?:\/|[a-z]:[\\/])/i.test(media) ? `file://${media}` : media}>
@@ -594,7 +594,7 @@ function MdImpl({ compact, t, text }: MdProps) {
       if (heading) {
         start('heading')
         nodes.push(
-          <Text bold color={t.color.accent} key={key} wrap="wrap-trim">
+          <Text bold color={t.color.accent} key={key}>
             <MdInline t={t} text={heading} />
           </Text>
         )
@@ -606,7 +606,7 @@ function MdImpl({ compact, t, text }: MdProps) {
       if (i + 1 < lines.length && SETEXT_RE.test(lines[i + 1]!)) {
         start('heading')
         nodes.push(
-          <Text bold color={t.color.accent} key={key} wrap="wrap-trim">
+          <Text bold color={t.color.accent} key={key}>
             <MdInline t={t} text={line.trim()} />
           </Text>
         )
@@ -632,7 +632,7 @@ function MdImpl({ compact, t, text }: MdProps) {
       if (footnote) {
         start('list')
         nodes.push(
-          <Text color={t.color.muted} key={key} wrap="wrap-trim">
+          <Text color={t.color.muted} key={key}>
             [{footnote[1]}] <MdInline t={t} text={footnote[2] ?? ''} />
           </Text>
         )
@@ -641,7 +641,7 @@ function MdImpl({ compact, t, text }: MdProps) {
         while (i < lines.length && /^\s{2,}\S/.test(lines[i]!)) {
           nodes.push(
             <Box key={`${key}-cont-${i}`} paddingLeft={2}>
-              <Text color={t.color.muted} wrap="wrap-trim">
+              <Text color={t.color.muted}>
                 <MdInline t={t} text={lines[i]!.trim()} />
               </Text>
             </Box>
@@ -655,7 +655,7 @@ function MdImpl({ compact, t, text }: MdProps) {
       if (i + 1 < lines.length && DEF_RE.test(lines[i + 1]!)) {
         start('list')
         nodes.push(
-          <Text bold key={key} wrap="wrap-trim">
+          <Text bold key={key}>
             {line.trim()}
           </Text>
         )
@@ -669,7 +669,7 @@ function MdImpl({ compact, t, text }: MdProps) {
           }
 
           nodes.push(
-            <Text key={`${key}-def-${i}`} wrap="wrap-trim">
+            <Text key={`${key}-def-${i}`}>
               <Text color={t.color.muted}> · </Text>
               <MdInline t={t} text={def} />
             </Text>
@@ -689,12 +689,14 @@ function MdImpl({ compact, t, text }: MdProps) {
         const marker = task ? (task[1]!.toLowerCase() === 'x' ? '☑' : '☐') : '•'
 
         nodes.push(
-          <Box key={key} paddingLeft={indentDepth(bullet[1]!) * 2}>
-            <Text wrap="wrap-trim">
-              <Text color={t.color.muted}>{marker} </Text>
-              <MdInline t={t} text={task ? task[2]! : bullet[2]!} />
+          <Text key={key}>
+            <Text color={t.color.muted}>
+              {' '.repeat(indentDepth(bullet[1]!) * 2)}
+              {marker}{' '}
             </Text>
-          </Box>
+
+            <MdInline t={t} text={task ? task[2]! : bullet[2]!} />
+          </Text>
         )
         i++
 
@@ -706,12 +708,14 @@ function MdImpl({ compact, t, text }: MdProps) {
       if (numbered) {
         start('list')
         nodes.push(
-          <Box key={key} paddingLeft={indentDepth(numbered[1]!) * 2}>
-            <Text wrap="wrap-trim">
-              <Text color={t.color.muted}>{numbered[2]}. </Text>
-              <MdInline t={t} text={numbered[3]!} />
+          <Text key={key}>
+            <Text color={t.color.muted}>
+              {' '.repeat(indentDepth(numbered[1]!) * 2)}
+              {numbered[2]}.{' '}
             </Text>
-          </Box>
+
+            <MdInline t={t} text={numbered[3]!} />
+          </Text>
         )
         i++
 
@@ -733,11 +737,11 @@ function MdImpl({ compact, t, text }: MdProps) {
         nodes.push(
           <Box flexDirection="column" key={key}>
             {quoteLines.map((ql, qi) => (
-              <Box key={qi} paddingLeft={Math.max(0, ql.depth - 1) * 2}>
-                <Text color={t.color.muted} wrap="wrap-trim">
-                  │ <MdInline t={t} text={ql.text} />
-                </Text>
-              </Box>
+              <Text color={t.color.muted} key={qi}>
+                {' '.repeat(Math.max(0, ql.depth - 1) * 2)}
+                {'│ '}
+                <MdInline t={t} text={ql.text} />
+              </Text>
             ))}
           </Box>
         )
@@ -770,7 +774,7 @@ function MdImpl({ compact, t, text }: MdProps) {
       if (summary) {
         start('paragraph')
         nodes.push(
-          <Text color={t.color.muted} key={key} wrap="wrap-trim">
+          <Text color={t.color.muted} key={key}>
             ▶ {summary}
           </Text>
         )
@@ -782,7 +786,7 @@ function MdImpl({ compact, t, text }: MdProps) {
       if (/^<\/?[^>]+>$/.test(line.trim())) {
         start('paragraph')
         nodes.push(
-          <Text color={t.color.muted} key={key} wrap="wrap-trim">
+          <Text color={t.color.muted} key={key}>
             {line.trim()}
           </Text>
         )

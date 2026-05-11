@@ -19,7 +19,6 @@ Airtable REST API via curl. Records CRUD, filters, upserts.
 | Version | `1.1.0` |
 | Author | community |
 | License | MIT |
-| Platforms | linux, macos, windows |
 | Tags | `Airtable`, `Productivity`, `Database`, `API` |
 
 ## Reference: full SKILL.md

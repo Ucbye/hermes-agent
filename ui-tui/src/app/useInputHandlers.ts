@@ -11,7 +11,6 @@ import type {
   VoiceRecordResponse
 } from '../gatewayTypes.js'
 import { isAction, isCopyShortcut, isMac, isVoiceToggleKey } from '../lib/platform.js'
-import { computePrecisionWheelStep, initPrecisionWheel } from '../lib/precisionWheel.js'
 import { computeWheelStep, initWheelAccelForHost } from '../lib/wheelAccel.js'
 
 import { getInputSelection } from './inputSelectionStore.js'
@@ -22,26 +21,8 @@ import { patchTurnState } from './turnStore.js'
 import { getUiState } from './uiStore.js'
 
 const isCtrl = (key: { ctrl: boolean }, ch: string, target: string) => key.ctrl && ch.toLowerCase() === target
-
-export function applyVoiceRecordResponse(
-  response: null | VoiceRecordResponse,
-  starting: boolean,
-  voice: Pick<InputHandlerContext['voice'], 'setProcessing' | 'setRecording'>,
-  sys: (text: string) => void
-) {
-  if (!starting || response?.status === 'recording') {
-    return
-  }
-
-  voice.setRecording(false)
-
-  if (response?.status === 'busy') {
-    voice.setProcessing(true)
-    sys('voice: still transcribing; try again shortly')
-  } else {
-    voice.setProcessing(false)
-  }
-}
+const PRECISION_WHEEL_MIN_GAP_MS = 80
+const PRECISION_WHEEL_STICKY_MS = 80
 
 export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
   const { actions, composer, gateway, terminal, voice, wheelStep } = ctx
@@ -57,7 +38,9 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
   // rows = wheelStep × accelMult. State mutates in place across renders.
   const wheelAccelRef = useRef(initWheelAccelForHost())
 
-  const precisionWheelRef = useRef(initPrecisionWheel())
+  const precisionWheelRef = useRef<{ active: boolean; dir: 0 | -1 | 1; lastEventAtMs: number; lastScrollAtMs: number }>(
+    { active: false, dir: 0, lastEventAtMs: 0, lastScrollAtMs: 0 }
+  )
 
   useEffect(() => () => clearTimeout(scrollIdleTimer.current ?? undefined), [])
 
@@ -177,12 +160,11 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
     }
   }
 
-  // CLI parity: Ctrl+B toggles a VAD-bounded push-to-talk capture
+  // CLI parity: Ctrl+B toggles the VAD-driven continuous recording loop
   // (NOT the voice-mode umbrella bit). The mode is enabled via /voice on;
   // Ctrl+B while the mode is off sys-nudges the user. While the mode is
-  // on, the first press starts a single VAD-bounded capture
-  // (gateway -> start_continuous(auto_restart=false), VAD auto-stop ->
-  // transcribe -> idle), a subsequent press stops and transcribes it.
+  // on, the first press starts a continuous loop (gateway → start_continuous,
+  // VAD auto-stop → transcribe → auto-restart), a subsequent press stops it.
   // The gateway publishes voice.status + voice.transcript events that
   // createGatewayEventHandler turns into UI badges and composer injection.
   const voiceRecordToggle = () => {
@@ -203,17 +185,14 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
       voice.setProcessing(false)
     }
 
-    gateway
-      .rpc<VoiceRecordResponse>('voice.record', { action, session_id: getUiState().sid })
-      .then(r => applyVoiceRecordResponse(r, starting, voice, actions.sys))
-      .catch((e: Error) => {
-        // Revert optimistic UI on failure.
-        if (starting) {
-          voice.setRecording(false)
-        }
+    gateway.rpc<VoiceRecordResponse>('voice.record', { action }).catch((e: Error) => {
+      // Revert optimistic UI on failure.
+      if (starting) {
+        voice.setRecording(false)
+      }
 
-        actions.sys(`voice error: ${e.message}`)
-      })
+      actions.sys(`voice error: ${e.message}`)
+    })
   }
 
   useInput((ch, key) => {
@@ -312,25 +291,39 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
     if (key.wheelUp || key.wheelDown) {
       const dir: -1 | 1 = key.wheelUp ? -1 : 1
       const now = Date.now()
-      // Modifier-held wheel = precision mode: one row per frame, no accel.
-      // Smooth mice / trackpads emit tiny same-frame bursts; coalesce those
-      // without the old 80ms throttle that made opt-scroll feel stepped.
+      // Modifier-held wheel = precision mode: at most one wheelStep per short
+      // interval. Smooth mice / trackpads emit many raw wheel events for one
+      // intended line step, so raw 1:1 still moves too far.
       // SGR/X10 mouse encoding only carries shift/meta/ctrl bits; Cmd on
       // macOS is intercepted by the terminal, so we honor Option (meta) on
       // Mac / Alt (meta) on Win+Linux / Ctrl as a portable fallback. Shift
       // is reserved for selection extension.
       const hasModifier = key.meta || key.ctrl
-      const precision = computePrecisionWheelStep(precisionWheelRef.current, dir, hasModifier, now)
+      const precision = precisionWheelRef.current
+      // Keep precision active through the current wheel burst after the
+      // modifier is released. Otherwise a stream of queued/momentum wheel
+      // events can hand off mid-burst into the accelerated path and jump.
+      const precisionSticky = now - precision.lastEventAtMs < PRECISION_WHEEL_STICKY_MS
 
-      if (precision.active) {
-        // Entering precision mode must discard any accelerated wheel state;
-        // otherwise the next normal wheel event inherits stale momentum.
-        if (precision.entered) {
+      if (hasModifier || precisionSticky) {
+        if (!precision.active) {
+          precision.active = true
           wheelAccelRef.current = initWheelAccelForHost()
         }
 
-        return precision.rows ? scrollTranscript(dir * wheelStep) : undefined
+        precision.lastEventAtMs = now
+
+        if (dir === precision.dir && now - precision.lastScrollAtMs < PRECISION_WHEEL_MIN_GAP_MS) {
+          return
+        }
+
+        precision.lastScrollAtMs = now
+        precision.dir = dir
+
+        return scrollTranscript(dir * wheelStep)
       }
+
+      precision.active = false
 
       // 0 = direction-flip bounce deferred; skip the no-op scroll.
       const rows = computeWheelStep(wheelAccelRef.current, dir, now)
@@ -355,17 +348,9 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
       return scrollTranscript(key.pageUp ? -step : step)
     }
 
-    // Escape-based voice bindings (ctrl/alt/super+escape) must win before the
-    // generic Esc handlers below; otherwise queue-edit cancel / selection-clear
-    // would swallow the chord and /voice would advertise a shortcut that never
-    // actually toggles recording in those UI states.
-    if (key.escape && isVoiceToggleKey(key, ch, voice.recordKey)) {
-      return voiceRecordToggle()
-    }
-
-    // Queue-edit cancel beats selection-clear for plain Esc: the queue header
-    // explicitly promises "Esc cancel", so honoring it takes priority over the
-    // implicit selection-dismissal convention. Without an active edit, fall through.
+    // Queue-edit cancel beats selection-clear: the queue header explicitly
+    // promises "Esc cancel", so honoring it takes priority over the implicit
+    // selection-dismissal convention. Without an active edit, fall through.
     if (key.escape && cState.queueEditIdx !== null) {
       return cActions.clearIn()
     }
@@ -454,7 +439,7 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
       return
     }
 
-    if (isVoiceToggleKey(key, ch, voice.recordKey)) {
+    if (isVoiceToggleKey(key, ch)) {
       return voiceRecordToggle()
     }
 

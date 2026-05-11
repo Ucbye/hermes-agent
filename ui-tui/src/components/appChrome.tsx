@@ -1,6 +1,6 @@
 import { Box, type ScrollBoxHandle, Text } from '@hermes/ink'
 import { useStore } from '@nanostores/react'
-import { type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from 'react'
+import { type ReactNode, type RefObject, useEffect, useMemo, useState } from 'react'
 import unicodeSpinners from 'unicode-animations'
 
 import { $delegationState } from '../app/delegationStore.js'
@@ -13,17 +13,12 @@ import { fmtDuration } from '../domain/messages.js'
 import { stickyPromptFromViewport } from '../domain/viewport.js'
 import { buildSubagentTree, treeTotals, widthByDepth } from '../lib/subagentTree.js'
 import { fmtK } from '../lib/text.js'
-import { useScrollbarSnapshot, useViewportSnapshot } from '../lib/viewportStore.js'
+import { useViewportSnapshot } from '../lib/viewportStore.js'
 import type { Theme } from '../theme.js'
 import type { Msg, Usage } from '../types.js'
 
 const FACE_TICK_MS = 2500
 const HEART_COLORS = ['#ff5fa2', '#ff4d6d']
-
-// Keep verb segment width stable so status-bar content to the right doesn't
-// jitter when the ticker rotates between short/long verbs.
-export const VERB_PAD_LEN = VERBS.reduce((max, v) => Math.max(max, v.length), 0) + 1 // + ellipsis
-export const padVerb = (verb: string) => `${verb}…`.padEnd(VERB_PAD_LEN, ' ')
 
 // Compact alternates for the `emoji` and `ascii` indicator styles.
 // Each entry is a fixed-width (display-width) glyph.
@@ -107,11 +102,7 @@ function FaceTicker({ color, startedAt }: { color: string; startedAt?: null | nu
 
   const { frame } = renderIndicator(style, tick)
   const verb = VERBS[verbTick % VERBS.length] ?? ''
-  const verbSegment = showVerb ? ` ${padVerb(verb)}` : ''
-  // Leading space keeps a gap between the frame and the duration when the
-  // verb segment is hidden (e.g. `unicode` spinner style).  When the verb
-  // IS shown, its trailing padding already provides the gap, so the extra
-  // space is harmless.
+  const verbSegment = showVerb ? ` ${verb}…` : ''
   const durationSegment = startedAt ? ` · ${fmtDuration(now - startedAt)}` : ''
 
   return (
@@ -323,14 +314,6 @@ export function StatusRule({
               <SessionDuration startedAt={sessionStartedAt} />
             </Text>
           ) : null}
-          {typeof usage.compressions === 'number' && usage.compressions > 0 ? (
-            <Text color={t.color.muted}>
-              {' │ '}
-              <Text color={usage.compressions >= 10 ? t.color.error : usage.compressions >= 5 ? t.color.warn : t.color.muted}>
-                cmp {usage.compressions}
-              </Text>
-            </Text>
-          ) : null}
           <SpawnHud t={t} />
           {voiceLabel ? (
             <Text
@@ -383,8 +366,7 @@ export function StickyPromptTracker({ messages, offsets, scrollRef, onChange }: 
 export function TranscriptScrollbar({ scrollRef, t }: TranscriptScrollbarProps) {
   const [hover, setHover] = useState(false)
   const [grab, setGrab] = useState<number | null>(null)
-  const grabRef = useRef<number | null>(null)
-  const { scrollHeight: total, top: pos, viewportHeight: vp } = useScrollbarSnapshot(scrollRef)
+  const { scrollHeight: total, top: pos, viewportHeight: vp } = useViewportSnapshot(scrollRef)
 
   if (!vp) {
     return <Box width={1} />
@@ -412,20 +394,15 @@ export function TranscriptScrollbar({ scrollRef, t }: TranscriptScrollbarProps) 
       onMouseDown={(e: { localRow?: number }) => {
         const row = Math.max(0, Math.min(vp - 1, e.localRow ?? 0))
         const off = row >= thumbTop && row < thumbTop + thumb ? row - thumbTop : Math.floor(thumb / 2)
-
-        grabRef.current = off
         setGrab(off)
         jump(row, off)
       }}
       onMouseDrag={(e: { localRow?: number }) =>
-        jump(Math.max(0, Math.min(vp - 1, e.localRow ?? 0)), grabRef.current ?? Math.floor(thumb / 2))
+        jump(Math.max(0, Math.min(vp - 1, e.localRow ?? 0)), grab ?? Math.floor(thumb / 2))
       }
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      onMouseUp={() => {
-        grabRef.current = null
-        setGrab(null)
-      }}
+      onMouseUp={() => setGrab(null)}
       width={1}
     >
       {!scrollable ? (

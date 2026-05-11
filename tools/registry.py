@@ -148,6 +148,48 @@ def invalidate_check_fn_cache() -> None:
         _check_fn_cache.clear()
 
 
+# ---------------------------------------------------------------------------
+# check_fn TTL cache
+#
+# check_fn callables like tools/terminal_tool.check_terminal_requirements
+# probe external state (Docker daemon, Modal SDK install, playwright binary
+# availability). For a long-lived CLI or gateway process, calling them on
+# every get_definitions() is pure waste — external state changes on human
+# timescales. Cache results for ~30 s so env-var flips via ``hermes tools``
+# or live credential file changes propagate within a turn or two without
+# requiring any explicit invalidation.
+# ---------------------------------------------------------------------------
+
+_CHECK_FN_TTL_SECONDS = 30.0
+_check_fn_cache: Dict[Callable, tuple[float, bool]] = {}
+_check_fn_cache_lock = threading.Lock()
+
+
+def _check_fn_cached(fn: Callable) -> bool:
+    """Return bool(fn()), TTL-cached across calls. Swallows exceptions as False."""
+    now = time.monotonic()
+    with _check_fn_cache_lock:
+        cached = _check_fn_cache.get(fn)
+        if cached is not None:
+            ts, value = cached
+            if now - ts < _CHECK_FN_TTL_SECONDS:
+                return value
+    try:
+        value = bool(fn())
+    except Exception:
+        value = False
+    with _check_fn_cache_lock:
+        _check_fn_cache[fn] = (now, value)
+    return value
+
+
+def invalidate_check_fn_cache() -> None:
+    """Drop all cached ``check_fn`` results. Call after config changes that
+    affect tool availability (e.g. ``hermes tools enable``)."""
+    with _check_fn_cache_lock:
+        _check_fn_cache.clear()
+
+
 class ToolRegistry:
     """Singleton registry that collects tool schemas + handlers from tool files."""
 
