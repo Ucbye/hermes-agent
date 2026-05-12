@@ -299,7 +299,7 @@ class ChatCompletionsTransport(ProviderTransport):
                 _kimi_effort = "medium"
                 if reasoning_config and isinstance(reasoning_config, dict):
                     _e = (reasoning_config.get("effort") or "").strip().lower()
-                    if _e in ("low", "medium", "high"):
+                    if _e in {"low", "medium", "high"}:
                         _kimi_effort = _e
                 api_kwargs["reasoning_effort"] = _kimi_effort
 
@@ -314,7 +314,7 @@ class ChatCompletionsTransport(ProviderTransport):
                 _tokenhub_effort = "high"
                 if reasoning_config and isinstance(reasoning_config, dict):
                     _e = (reasoning_config.get("effort") or "").strip().lower()
-                    if _e in ("low", "medium", "high"):
+                    if _e in {"low", "medium", "high"}:
                         _tokenhub_effort = _e
                 api_kwargs["reasoning_effort"] = _tokenhub_effort
 
